@@ -1,5 +1,10 @@
-def main():
-    print("Hello from sleep-calendar-agent!")
+import uvicorn
+
+from mock_calendar_api import app
+
+
+def main() -> None:
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":

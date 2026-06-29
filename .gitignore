@@ -1,6 +1,9 @@
 # Virtual environments (uv default)
 .venv/
 
+# SQLite database created by the mock API
+calendar.db
+
 # uv-specific artifacts (optional but recommended)
 .uv/
 
