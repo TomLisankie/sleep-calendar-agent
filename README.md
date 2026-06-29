@@ -86,6 +86,17 @@ Inserts a fixed sleep-themed dataset anchored to today. With `replace=true`
 
 ## Tests
 
+A pytest suite exercises every endpoint, including validation, range-query
+boundary semantics, batch upsert atomicity, DST/timezone conversion, and seed
+idempotency. Tests run against an isolated in-memory SQLite DB (no file
+artifacts).
+
 ```bash
-PYTHONPATH=. uv run python scripts/smoke_test.py
+uv run pytest
+```
+
+The standalone smoke script is also available:
+
+```bash
+uv run python scripts/smoke_test.py
 ```

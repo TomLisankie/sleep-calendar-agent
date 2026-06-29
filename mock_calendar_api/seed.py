@@ -1,7 +1,7 @@
 """Seed data and reset helpers."""
 
 from datetime import datetime, timedelta, timezone
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlmodel import Session, select
 
@@ -69,7 +69,7 @@ def seed_events(session: Session, *, replace: bool = True) -> list[Event]:
             metadata_={"quality": None, "source": "seed"},
         ),
         EventCreate(
-            id=uuid4(),
+            id=UUID("44444444-4444-4444-4444-444444444444"),
             title="Wind-down",
             start=tonight[0] - timedelta(hours=1),
             end=tonight[0],
@@ -80,7 +80,12 @@ def seed_events(session: Session, *, replace: bool = True) -> list[Event]:
 
     created: list[Event] = []
     for data in seed_data:
-        event = Event(id=data.id) if data.id is not None else Event()
+        # Upsert by ID: when not replacing, an existing seed event with the
+        # same fixed ID is updated in place rather than re-inserted (which
+        # would violate the unique constraint). Random/fresh IDs always insert.
+        event = session.get(Event, data.id) if data.id is not None else None
+        if event is None:
+            event = Event(id=data.id) if data.id is not None else Event()
         apply_create_fields(event, data)
         session.add(event)
         created.append(event)
