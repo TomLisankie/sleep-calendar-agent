@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 try:
     from .tools import TOOLS  # relative  (when used as a package)
 except ImportError:
     from agent.tools import TOOLS  # absolute (when run directly)
+
+try:
+    from .tz import NY  # type: ignore[import]
+except ImportError:
+    try:
+        from mock_calendar_api.tz import NY
+    except ImportError:
+        from zoneinfo import ZoneInfo
+
+        NY = ZoneInfo("America/New_York")
 
 
 def get_tool_list() -> str:
@@ -32,9 +43,16 @@ def get_tool_list() -> str:
     return "\n".join(lines)
 
 
+def _now_ny() -> str:
+    """Return the current New York local time as a readable string."""
+    return datetime.now(NY).strftime("%A, %B %-d %Y, %-I:%M %p %Z")
+
+
 def get_system_prompt() -> str:
     """Return the fully rendered system prompt (built lazily so tools are ready)."""
     return f"""You are an assistant who specialises in scheduling a person's day. You operate inside of a calendar agent called SleepCal — a calendar agent who considers sleep to be the most important part of the day. You treat sleep with that weight: protect it, schedule around it, and never let other events encroach on sleep or wind-down time.
+
+The current date and time is: {_now_ny()}
 
 You have the following tools available to you:
 {get_tool_list()}
