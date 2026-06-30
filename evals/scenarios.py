@@ -55,6 +55,23 @@ def _reply_mentions(reply: str, *terms: str) -> bool:
     return any(t.lower() in lower for t in terms)
 
 
+def _events_in_order(events: list[dict], title_fragments: list[str]) -> bool:
+    """True when events matching the fragments appear in chronological order.
+
+    Each fragment is matched (case-insensitive substring) against event titles.
+    If a fragment matches no event, it is skipped (lenient).  Returns False only
+    when two matched events are in the *wrong* order.
+    """
+    matched_starts: list[str] = []
+    for frag in title_fragments:
+        for e in events:
+            if frag.lower() in e["title"].lower():
+                matched_starts.append(e["start"])
+                break
+    # Check that the matched starts are in non-decreasing order.
+    return all(a <= b for a, b in zip(matched_starts, matched_starts[1:]))
+
+
 def _no_event_overlaps_window(
     events: list[dict],
     window_start: datetime,
@@ -529,6 +546,82 @@ SCENARIOS: list[EvalScenario] = [
             "Agent may warn about wind-down (starts at 11pm) or might just create it."
         ),
     ),
+    # ── Messy / stream-of-consciousness input ───────────────────────────────
+
+    EvalScenario(
+        name="messy_brain_dump",
+        seed=False,
+        user_message=(
+            "ok so tomorrow I gotta do a bunch of stuff. I need to call my mom at "
+            "some point in the morning, she's usually up by 9. Oh and I have that "
+            "dentist thing at 2 I think it's like 45 mins. Before that I should "
+            "probably eat lunch, maybe around noon? Also I promised Jake I'd help "
+            "him move — that's gonna be like 3 hours probably, I was thinking start "
+            "around 4ish after the dentist. Oh wait I also need to pick up my "
+            "prescription, that's on the way to Jake's so maybe I'll do that at "
+            "like 3:30. And I need to do laundry at some point but honestly that "
+            "can be whenever, maybe morning? Oh and I told Sarah we'd grab dinner "
+            "at 7:30."
+        ),
+        oracle=lambda events, reply: (
+            # There are ~7 distinct activities buried in this wall of text.
+            # The agent needs to extract and schedule most of them.
+            # We check for at least 5 of the 7.
+            sum([
+                _event_with_title(events, "mom") or _event_with_title(events, "call"),
+                _event_with_title(events, "dentist"),
+                _event_with_title(events, "lunch"),
+                _event_with_title(events, "jake") or _event_with_title(events, "mov"),
+                _event_with_title(events, "prescription") or _event_with_title(events, "pharmacy"),
+                _event_with_title(events, "laundry"),
+                _event_with_title(events, "sarah") or _event_with_title(events, "dinner"),
+            ]) >= 5
+        ),
+        tags=["create", "batch", "messy-input"],
+        description=(
+            "Stream-of-consciousness brain dump with ~7 events, vague times, "
+            "some ordering hints ('before that', 'on the way to'), corrections "
+            "('oh wait'), and filler. The agent must parse all of this into "
+            "discrete calendar events with reasonable times. Likely failures: "
+            "missing events, wrong times, ignoring sequencing hints, or giving "
+            "up and asking the user to repeat themselves."
+        ),
+    ),
+
+    EvalScenario(
+        name="messy_brain_dump_ordering",
+        seed=False,
+        user_message=(
+            "ok so tomorrow I gotta do a bunch of stuff. I need to call my mom at "
+            "some point in the morning, she's usually up by 9. Oh and I have that "
+            "dentist thing at 2 I think it's like 45 mins. Before that I should "
+            "probably eat lunch, maybe around noon? Also I promised Jake I'd help "
+            "him move — that's gonna be like 3 hours probably, I was thinking start "
+            "around 4ish after the dentist. Oh wait I also need to pick up my "
+            "prescription, that's on the way to Jake's so maybe I'll do that at "
+            "like 3:30. And I need to do laundry at some point but honestly that "
+            "can be whenever, maybe morning? Oh and I told Sarah we'd grab dinner "
+            "at 7:30."
+        ),
+        oracle=lambda events, reply: (
+            # Check sequencing hints are respected:
+            # - Lunch before dentist (user said "before that")
+            # - Prescription before Jake's (user said "on the way")
+            # - Dentist before prescription/Jake ("after the dentist")
+            # We parse start times and check ordering.
+            _events_in_order(events, ["lunch", "dentist", "prescription", "jake"])
+            if len(events) >= 4
+            else False
+        ),
+        tags=["create", "event-order", "messy-input"],
+        description=(
+            "Same brain dump, but this oracle checks that the implied ordering "
+            "constraints are respected: lunch → dentist → prescription → Jake's move. "
+            "The user gave these hints indirectly ('before that', 'after the dentist', "
+            "'on the way to Jake\'s'). Very likely to fail on sequencing."
+        ),
+    ),
+
     # ── Double-booking / overlap awareness ────────────────────────────────────
     EvalScenario(
         name="double_book_same_slot",
