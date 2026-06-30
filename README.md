@@ -15,6 +15,22 @@ Before considering agent behavior, I first wanted to consider the stability of t
 
 Next up was testing agent behavior. There are an enormous number of valid schedules for a given query so it's unimportant to see if a schedule matches a particular example verbatim and is instead important to make sure certain structural (ex. all mentioned events in the user query were added) and semantic (ex. don't add a shower event right before a workout event) properties are met. Also important is taking into account social logic (ex. it should double check with you if fulfilling your scheduling goal would involve canceling a meeting since that doesn't just affect you). I tried to represent these kinds of scenarios accurately in my evaluation suite. I used programmatic checks for structural requirements and some semantic requirements. To test whether the agent was correctly invoking concerns about events flowing into sleep time, I used an LLM-as-judge setup.
 
+## Some ways it failed and got fixed
+- It would sometimes mess up the ordering of events so that the order wouldn't make sense. For example, it put a shower right before a workout. That makes no sense. Including this (and reference to other common sense scenarios) in the guidelines of the system prompt helped.
+- It would not include travel time sometimes even when reasonable. Again, a fix to the system prompt helped.
+
+# Future changes
+I think it might be good to take a more systematic approach to how the agent creates, validates, and executes plans. Right now, it relies fairly heavily on just one LLM role (the scheduler) to make a sensible schedule and build it. The steps involved in this aren't really differentiated from one another. Instead, what if the agent went through this process instead:
+1. What is the goal in the user's query (ex. schedule the day, rearrange the existing schedule, etc.)?
+2. Generate a step-by-step plan to achieve the identified goal using the available tools.
+3. Have a separate LLM call validate the validity of the plan / schedule.
+4. Put each plan step onto a stack.
+5. Pop a step off the stack and execute it.
+6. If the step's output is valid, continue to the next step. If it's not, consider a new next step and add it to the stack.
+7. Continue until the stack is empty.
+
+This may allow for more fine-grained observation/measurement of the agent which could then lead to quicker diagnosis and fixing of issues. This would also allow for more testing of the process the agent goes through to achieve the goal rather than just the outcomes of the full pursuit of the goal.
+
 # Usage and Installation
 
 ## Prerequisites
