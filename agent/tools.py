@@ -261,31 +261,6 @@ TOOLS: list[dict] = [
             },
         },
     },
-    # ── seed_calendar ────────────────────────────────────────────────────────
-    {
-        "type": "function",
-        "function": {
-            "name": "seed_calendar",
-            "description": (
-                "Insert the deterministic seed dataset into the calendar. "
-                "With replace=true (default) the table is cleared first, "
-                "giving a known starting state. "
-                "Returns the list of seeded EventRead objects."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "replace": {
-                        "type": "boolean",
-                        "description": (
-                            "If true (default), clear all existing events before seeding."
-                        ),
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
     # ── clear_all_events ─────────────────────────────────────────────────────
     {
         "type": "function",
@@ -345,13 +320,6 @@ def _dispatch_inner(tool_name: str, args: dict) -> Any:
 
     if tool_name == "batch_upsert":
         return _post("/events/batch", body=args["events"])
-
-    if tool_name == "seed_calendar":
-        params = {}
-        if "replace" in args:
-            # FastAPI expects a query param, not a body
-            params["replace"] = str(args["replace"]).lower()
-        return _post("/seed", params=params or None)
 
     if tool_name == "clear_all_events":
         return _delete("/events")
