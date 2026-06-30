@@ -1,8 +1,21 @@
-# Sleep Calendar Agent
+# What it is
 
-A sleep-focused calendar scheduling agent backed by a mock calendar HTTP API.
-You talk to the agent in plain English; it calls the calendar API on your behalf
-while treating your sleep block as inviolable.
+A calendar scheduling agent which treats sleep as the most important part of the day and tries whenever possible to not mess with it.
+
+# Architecture
+- Mock calendar API. This is in place of, say, the Google Calendar API so that you don't have to plug your actual calendar in just to try it out.
+- User preferences file. This holds basic user preferences related to sleep.
+- A standard agent loop. This agent takes in user queries related to scheduling and performs calendaring actions using the tools it's provided with in order to make the necessary changes to the calendar. Available tools are provided to the LLM in the OpenAI function calling format.
+
+# Coding Agent
+I used the [Pi coding agent](https://pi.dev/) with a mix of GLM 5.2, Claude Sonnet 4.6, and Claude Opus 4.6. I started with GLM 5.2 because it's really good at coding for the price. However, I ran into capacity constraints so switched over to Claude models because I've found them to be really nice at coding although they're more expensive.
+
+# Evaluation
+Before considering agent behavior, I first wanted to consider the stability of the harness and its ability to properly call tools in various scenarios (no tools needed, multiple tool calls chained together, etc.). This is important because the LLM could generate excellent behavior but it doesn't matter if the harness can't execute any of it.
+
+Next up was testing agent behavior. There are an enormous number of valid schedules for a given query so it's unimportant to see if a schedule matches a particular example verbatim and is instead important to make sure certain structural (ex. all mentioned events in the user query were added) and semantic (ex. don't add a shower event right before a workout event) properties are met. Also important is taking into account social logic (ex. it should double check with you if fulfilling your scheduling goal would involve canceling a meeting since that doesn't just affect you). I tried to represent these kinds of scenarios accurately in my evaluation suite. I used programmatic checks for structural requirements and some semantic requirements. To test whether the agent was correctly invoking concerns about events flowing into sleep time, I used an LLM-as-judge setup.
+
+# Usage and Installation
 
 ## Prerequisites
 
