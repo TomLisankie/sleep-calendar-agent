@@ -1,11 +1,12 @@
 """Database engine, session management, and app lifespan."""
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlmodel import Session, SQLModel, create_engine
 
-sqlite_url = "sqlite:///./calendar.db"
+sqlite_url = os.environ.get("DATABASE_URL", "sqlite:///./calendar.db")
 engine = create_engine(
     sqlite_url,
     echo=False,

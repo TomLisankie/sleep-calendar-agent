@@ -1,0 +1,15 @@
+services:
+  calendar-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the SQLite database across restarts
+      - calendar-data:/app/data
+    environment:
+      # Store the DB in the mounted volume
+      - DATABASE_URL=sqlite:////app/data/calendar.db
+    restart: unless-stopped
+
+volumes:
+  calendar-data:

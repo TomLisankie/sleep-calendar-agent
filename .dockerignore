@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+calendar.db
+.pytest_cache/
+evals/
+tests/
+scripts/
+agent/
+*.md
+.git/
