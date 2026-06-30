@@ -139,7 +139,7 @@ SCENARIOS: list[EvalScenario] = [
         seed=False,
         user_message=(
             "Add these two events for tomorrow: "
-            "a morning run from 7am to 8am, and a grocery trip from 10am to 11am."
+            "a morning run from 11am to 12 PM, and a grocery trip from 10am to 11am."
         ),
         oracle=lambda events, reply: (
             _event_with_title(events, "run") and _event_with_title(events, "grocer")
