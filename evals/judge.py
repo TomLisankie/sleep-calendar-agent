@@ -7,7 +7,7 @@ compatible client and model name.
 
 Usage::
 
-    from evals.judge import Judge, SleepGuardRubric
+    from evals.judge import Judge, SleepGuardRubric, EventOrderRubric
 
     judge = Judge(client, model="google/gemini-2.5-flash")
     result = judge.score(
@@ -21,6 +21,15 @@ Usage::
         final_events=[...],
     )
     print(result.score, result.reason)   # 0, "Agent did not warn..."
+
+    # Event-order reasonableness:
+    result = judge.score(
+        rubric=EventOrderRubric(),
+        user_message="Schedule a workout, shower, and breakfast tomorrow morning.",
+        agent_reply="Done! I've added all three.",
+        final_events=[...],
+    )
+    print(result.score, result.reason)   # 2, "Events are in a logical order."
 """
 from __future__ import annotations
 
@@ -30,7 +39,10 @@ from dataclasses import dataclass
 from typing import Any
 
 
-# ── Rubric ────────────────────────────────────────────────────────────────────
+# ── Rubrics ───────────────────────────────────────────────────────────────────
+# Any rubric must implement:
+#   .prompt(user_message, agent_reply, final_events) -> str
+
 
 @dataclass
 class SleepGuardRubric:
@@ -89,6 +101,75 @@ class SleepGuardRubric:
         """).strip()
 
 
+@dataclass
+class EventOrderRubric:
+    """
+    Scoring rubric for semantic event-ordering reasonableness.
+
+    Checks whether the agent scheduled activities in a *logically sensible*
+    order — e.g. workout before shower, cooking before eating, commute before
+    arriving at work.
+
+    Scores:
+        0 — Events are in a clearly illogical order (shower before workout,
+            eating before cooking, etc.).
+        1 — Order is technically possible but unusual or sub-optimal.
+        2 — Events are in a natural, common-sense chronological order.
+    """
+
+    def prompt(
+        self,
+        user_message: str,
+        agent_reply: str,
+        final_events: list[dict],
+    ) -> str:
+        events_summary = json.dumps(
+            [{"title": e["title"], "start": e["start"], "end": e["end"]} for e in final_events],
+            indent=2,
+        )
+        return textwrap.dedent(f"""
+            You are an impartial evaluator assessing a calendar scheduling assistant.
+
+            ## Conversation
+            User: {user_message}
+            Assistant: {agent_reply}
+
+            ## Calendar state after the assistant's response
+            {events_summary}
+
+            ## Task
+            Evaluate whether the events the assistant scheduled are in a **logically
+            sensible chronological order** given their real-world nature.  Focus on
+            activities that have a natural dependency or conventional sequence:
+
+            - Workout → shower (not shower → workout)
+            - Cooking → eating / dinner (not eating → cooking)
+            - Getting dressed → leaving the house
+            - Commute → arrival at destination
+            - Prep / setup → the main event
+            - Grocery shopping → cooking
+
+            Ignore events that have no inherent ordering dependency (e.g. "email" and
+            "lunch" can go in either order).
+
+            Assign one of these scores:
+
+            0 — At least one pair of events is in a clearly wrong order (e.g. shower
+                is scheduled *before* workout, or dinner before cooking).
+            1 — The order is technically possible but unusual or sub-optimal
+                (e.g. a very short gap between cooking and eating, or dependencies
+                are met but the timing is awkward).
+            2 — All events with a natural dependency are in a sensible, common-sense
+                order.
+
+            If the user's request did not involve multiple events with ordering
+            dependencies, score 2 (vacuously correct).
+
+            Respond with JSON only, exactly in this format:
+            {{"score": <0|1|2>, "reason": "<one sentence explaining your score>"}}
+        """).strip()
+
+
 # ── Judge ─────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -125,7 +206,7 @@ class Judge:
 
     def score(
         self,
-        rubric: SleepGuardRubric,
+        rubric: SleepGuardRubric | EventOrderRubric,
         user_message: str,
         agent_reply: str,
         final_events: list[dict],

@@ -290,6 +290,93 @@ SCENARIOS: list[EvalScenario] = [
         tags=["sleep-protection", "wind-down", "conflict"],
         description="Agent must warn when a request conflicts with wind-down time.",
     ),
+    # ── Event ordering (semantic reasonableness) ──────────────────────────────
+
+    EvalScenario(
+        name="order_workout_then_shower",
+        seed=False,
+        user_message="Schedule a workout and a shower tomorrow morning. I'm free from 7am to 10am.",
+        oracle=lambda events, reply: (
+            _event_with_title(events, "workout") and
+            _event_with_title(events, "shower")
+        ),
+        tags=["create", "event-order"],
+        description=(
+            "Agent should create both events AND place workout before shower. "
+            "Oracle only checks existence; ordering is validated by the EventOrderRubric judge."
+        ),
+    ),
+
+    EvalScenario(
+        name="order_cook_then_eat",
+        seed=False,
+        user_message=(
+            "Tomorrow evening I want to cook dinner and then eat. "
+            "Block out time for both starting around 6pm."
+        ),
+        oracle=lambda events, reply: (
+            (_event_with_title(events, "cook") or _event_with_title(events, "prep")) and
+            (_event_with_title(events, "eat") or _event_with_title(events, "dinner"))
+        ),
+        tags=["create", "event-order"],
+        description="Cooking must come before eating/dinner.",
+    ),
+
+    EvalScenario(
+        name="order_grocery_cook_dinner",
+        seed=False,
+        user_message=(
+            "Tomorrow I need to go grocery shopping, cook, and have dinner with friends. "
+            "Fit them in between 3pm and 8pm."
+        ),
+        oracle=lambda events, reply: (
+            (_event_with_title(events, "grocer") or _event_with_title(events, "shop")) and
+            (_event_with_title(events, "cook") or _event_with_title(events, "prep")) and
+            (_event_with_title(events, "dinner") or _event_with_title(events, "eat"))
+        ),
+        tags=["create", "event-order"],
+        description="Three-step chain: grocery → cook → dinner.",
+    ),
+
+    EvalScenario(
+        name="order_commute_then_meeting",
+        seed=False,
+        user_message=(
+            "I have a meeting at the downtown office at 10am tomorrow. "
+            "Schedule a 45-minute commute beforehand."
+        ),
+        oracle=lambda events, reply: (
+            (_event_with_title(events, "commute") or _event_with_title(events, "travel") or
+             _event_with_title(events, "drive")) and
+            _event_with_title(events, "meeting")
+        ),
+        tags=["create", "event-order"],
+        description="Commute must end before or at the meeting start.",
+    ),
+
+    EvalScenario(
+        name="order_morning_routine",
+        seed=False,
+        user_message=(
+            "Plan my morning routine for tomorrow: wake up, exercise, shower, "
+            "get dressed, and have breakfast. Start at 7am, I need to leave by 9:30am."
+        ),
+        oracle=lambda events, reply: (
+            # At least 3 of the 5 items should appear as events.
+            sum([
+                _event_with_title(events, "exercise") or _event_with_title(events, "workout"),
+                _event_with_title(events, "shower"),
+                _event_with_title(events, "dress") or _event_with_title(events, "dressed"),
+                _event_with_title(events, "breakfast"),
+            ]) >= 3
+        ),
+        tags=["create", "event-order", "batch"],
+        description=(
+            "Full morning chain: exercise → shower → get dressed → breakfast. "
+            "The judge checks the ordering makes real-world sense."
+        ),
+    ),
+
     # ── Clear / reset ─────────────────────────────────────────────────────────
     EvalScenario(
         name="clear_calendar",
