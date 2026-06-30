@@ -15,6 +15,8 @@ agent/
   tools.py         # OpenAI tool schemas + HTTP dispatcher for every API endpoint
   system_prompt.py # Lazily-built system prompt (injects tool list + current time)
 mock_calendar_api/ # FastAPI + SQLModel mock calendar HTTP API
+tests/             # API endpoint unit tests (pytest, in-memory SQLite)
+evals/             # Agent evaluation suite (4 layers — see Evals below)
 user-prefs.json    # User sleep preferences (bedtime, waketime, wind_down_mins)
 .env               # OPENROUTER_API_KEY and CALENDAR_API_URL
 ```
@@ -145,6 +147,11 @@ API's request shapes, and a `dispatch()` function that executes the
 corresponding `httpx` call. Tool invocations are printed to the terminal
 as `[tool]` / `[tool result]` lines so you can follow along.
 
+The `seed_calendar` endpoint (`POST /seed`) is intentionally **not** exposed as
+an agent tool — it is an internal/test utility. Only the 7 CRUD tools are
+available to the agent: `create_event`, `get_event`, `list_events`,
+`update_event`, `delete_event`, `batch_upsert`, and `clear_all_events`.
+
 ### System prompt
 `agent/system_prompt.py` builds the prompt lazily at call time (not at import
 time) so it always reflects the live tool list and the current New York
@@ -159,7 +166,7 @@ idempotency. Tests run against an isolated in-memory SQLite DB (no file
 artifacts).
 
 ```bash
-uv run pytest
+uv run pytest tests/
 ```
 
 The standalone smoke script is also available:
@@ -167,3 +174,117 @@ The standalone smoke script is also available:
 ```bash
 uv run python scripts/smoke_test.py
 ```
+
+## Evals
+
+The `evals/` directory contains a four-layer agent evaluation suite designed to
+catch regressions in tool routing, prompt construction, agent-loop mechanics,
+and end-to-end scheduling behaviour.
+
+### Running evals
+
+```bash
+# Layers 1 & 2: deterministic, no LLM, no network — runs in <1s
+uv run pytest evals/test_dispatch.py evals/test_prompt.py evals/test_agent_loop.py evals/test_sleep_guard.py::TestJudgeParser
+
+# Layers 3 & 4: live LLM (requires OPENROUTER_API_KEY in .env)
+uv run pytest evals/test_scenarios.py evals/test_event_order.py evals/test_sleep_guard.py
+
+# Run everything (API tests + all evals)
+uv run pytest
+
+# Target a specific failure-mode tag
+uv run pytest evals/test_scenarios.py -k "negation"
+uv run pytest evals/test_scenarios.py -k "dense_schedule"
+```
+
+Live-LLM tests are automatically skipped when `OPENROUTER_API_KEY` is not set.
+
+### Eval structure
+
+```
+evals/
+  conftest.py          # Shared fixtures: in-memory API client, sleep-window helpers
+  fake_llm.py          # Scripted fake OpenAI client for Layer 2 tests
+  judge.py             # LLM-as-Judge: SleepGuardRubric, EventOrderRubric
+  scenarios.py         # EvalScenario dataclass, 50 scenario definitions, setup helpers
+  test_dispatch.py     # Layer 1a: tool dispatch routing (mocked httpx)
+  test_prompt.py       # Layer 1b/c: system prompt integrity + tool schema compliance
+  test_agent_loop.py   # Layer 2: agent loop with scripted fake LLM
+  test_scenarios.py    # Layer 3: oracle-based end-to-end scenarios (live LLM)
+  test_event_order.py  # Layer 4: event-ordering reasonableness (LLM-as-Judge)
+  test_sleep_guard.py  # Layer 4: sleep-protection adversarials (LLM-as-Judge)
+```
+
+### Layer 1 — Deterministic unit evals (no LLM, no network)
+
+- **`test_dispatch.py`** — Every tool name maps to the correct HTTP verb, URL,
+  and payload. Verifies `event_id` is stripped from PATCH bodies, query params
+  are forwarded correctly, and unknown tools return errors.
+- **`test_prompt.py`** — System prompt contains the current NY time, mentions
+  all tools, includes sleep-protection language. Tool schemas are valid
+  (required params exist in properties, types are valid JSON Schema, no
+  duplicates, all snake_case).
+
+### Layer 2 — Agent loop with scripted LLM
+
+- **`test_agent_loop.py`** — Drives `_run_turn()` with a `FakeLLMClient` that
+  replays predetermined tool-call / text sequences. Tests single and multi-step
+  tool chains, parallel tool calls, error propagation, conversation history
+  growth, and tool-call ID forwarding.
+
+### Layer 3 — Oracle-based end-to-end scenarios (live LLM)
+
+- **`test_scenarios.py`** — 50 scenarios, each with a user message and an
+  oracle function that checks the final calendar state and agent reply.
+  Scenarios cover:
+
+  | Tag                  | Count | Tests                                                    |
+  |----------------------|-------|----------------------------------------------------------|
+  | `create`             | 20    | Simple, batch, with-location, duration inference         |
+  | `read`               | 2     | List today, describe sleep block                         |
+  | `update`             | 4     | Reschedule, rename, move-to-gap                          |
+  | `delete`             | 6     | Cancel, clear-all, selective deletion                    |
+  | `sleep-protection`   | 7     | Direct conflict, wind-down overlap, boundary edges       |
+  | `event-order`        | 6     | Workout→shower, cook→eat, morning routine chains         |
+  | `dense-schedule`     | 5     | Packed workday: cancel meetings, find gaps, prioritize   |
+  | `messy-input`        | 2     | Stream-of-consciousness brain dump with ~7 events        |
+  | `relative-time`      | 3     | "In 3 hours", "next Tuesday", "day after tomorrow"       |
+  | `midnight-confusion` | 2     | "Tonight at 1am", events ending at midnight              |
+  | `double-booking`     | 2     | Overlap within request, overlap with existing event      |
+  | `duration-inference` | 2     | No end time given, "quick coffee"                        |
+  | `conditional`        | 2     | "If free at 3pm, add gym" (busy / free variants)         |
+  | `idempotency`        | 2     | Duplicate detection, same-title-different-time           |
+  | `negation`           | 3     | "EXCEPT the gym", "delete all but date", "NOT morning"   |
+  | `retroactive`        | 2     | Query past events, read actual sleep end time            |
+  | `arithmetic`         | 2     | Sum meeting hours, compute free time in a range          |
+  | `dangerous-tool`     | 2     | "Start fresh" shouldn't nuke, seed not called by user    |
+  | `timezone`           | 1     | "3pm UTC" → NY local conversion                          |
+  | `implicit-dependency`| 1     | Shower survives workout→shower→date chain                |
+  | `prioritization`     | 2     | Running behind: keep workout + date, drop the right stuff|
+
+  Each scenario optionally seeds or uses a custom `setup` function (e.g.
+  `_setup_dense_schedule` populates a 15-event packed workday).
+
+### Layer 4 — LLM-as-Judge
+
+- **`test_sleep_guard.py`** — Adversarial sleep-conflict prompts scored by a
+  judge LLM on a 0–2 rubric (`SleepGuardRubric`). Includes "just this once",
+  "only 30 minutes", "don't worry about sleep" phrasings.
+- **`test_event_order.py`** — Event-ordering scenarios scored by
+  `EventOrderRubric`. Checks workout→shower, cook→eat, grocery→cook→dinner,
+  commute→meeting, and full morning-routine chains.
+
+### Adding a new scenario
+
+1. Define an `EvalScenario` in `evals/scenarios.py` with a `name`,
+   `user_message`, `oracle` function, and `tags`.
+2. Optionally add a `setup` callable that populates the calendar via the
+   TestClient before the agent runs (see `_setup_dense_schedule` for an
+   example).
+3. The scenario is automatically picked up by `test_scenarios.py`'s
+   parametrized test. Tag-filtered test functions (e.g.
+   `test_sleep_protection_scenario`) also pick it up if the tags match.
+4. For judge-scored scenarios, add a test in `test_event_order.py` or
+   `test_sleep_guard.py` that calls `_run_scenario` and passes the result
+   to a `Judge` with the appropriate rubric.
