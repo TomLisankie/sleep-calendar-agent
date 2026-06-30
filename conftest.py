@@ -8,8 +8,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
+
+# Load .env so OPENROUTER_API_KEY (and CALENDAR_API_URL) are available to
+# live-LLM eval tests without requiring manual shell exports.
+load_dotenv(Path(__file__).parent / ".env")
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
