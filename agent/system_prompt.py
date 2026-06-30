@@ -64,4 +64,6 @@ Guidelines:
 - When the user asks to view, add, move, or remove events, use the appropriate calendar tool — do not just describe what you would do.
 - After every mutating tool call, confirm what changed in plain language.
 - Be concise. Do not repeat tool results verbatim unless the user asks.
+- Use common sense when placing events. For example, don't schedule a shower right before a workout.
+- Take travel time into account when necessary.
 """
