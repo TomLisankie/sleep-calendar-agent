@@ -122,6 +122,10 @@ def _run_scenario(
     if scenario.seed:
         api_client.post("/seed", params={"replace": "true"})
 
+    # 1b. Run custom setup if provided.
+    if scenario.setup is not None:
+        scenario.setup(api_client)
+
     # 2. Build a transport that routes httpx → in-memory TestClient.
     transport = _TestClientTransport(api_client)
 

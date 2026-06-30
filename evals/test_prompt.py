@@ -174,7 +174,6 @@ class TestToolSchemaCompliance:
             "update_event",
             "delete_event",
             "batch_upsert",
-            "seed_calendar",
             "clear_all_events",
         }
         actual = {t["function"]["name"] for t in TOOLS}

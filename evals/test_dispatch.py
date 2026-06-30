@@ -182,23 +182,14 @@ class TestBatchUpsertDispatch:
 # ── seed_calendar ─────────────────────────────────────────────────────────────
 
 
-class TestSeedCalendarDispatch:
-    def test_posts_to_seed_with_no_args(self):
-        with patch("agent.tools._post", return_value=[]) as mock_post:
-            dispatch("seed_calendar", {})
-        mock_post.assert_called_once_with("/seed", params=None)
+class TestSeedCalendarNotExposed:
+    """seed_calendar was removed from agent tools — it's an internal-only endpoint."""
 
-    def test_replace_true_passed_as_query_param(self):
-        with patch("agent.tools._post", return_value=[]) as mock_post:
-            dispatch("seed_calendar", {"replace": True})
-        _, kw = mock_post.call_args
-        assert kw["params"]["replace"] == "true"
-
-    def test_replace_false_passed_as_query_param(self):
-        with patch("agent.tools._post", return_value=[]) as mock_post:
-            dispatch("seed_calendar", {"replace": False})
-        _, kw = mock_post.call_args
-        assert kw["params"]["replace"] == "false"
+    def test_seed_calendar_returns_unknown_tool_error(self):
+        result = dispatch("seed_calendar", {})
+        data = json.loads(result)
+        assert "error" in data
+        assert "seed_calendar" in data["error"]
 
 
 # ── clear_all_events ──────────────────────────────────────────────────────────
