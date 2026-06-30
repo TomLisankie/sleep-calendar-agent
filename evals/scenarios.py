@@ -196,6 +196,19 @@ def _setup_dense_schedule(api_client) -> None:
     assert r.status_code == 200, f"Dense schedule setup failed: {r.text}"
 
 
+def _setup_pre_existing_gym(api_client) -> None:
+    """Create a single gym event tomorrow at 5pm (for idempotency tests)."""
+    tomorrow_5pm = _today() + timedelta(days=1, hours=17)
+    tomorrow_6pm = _today() + timedelta(days=1, hours=18)
+    payload = {
+        "title": "Gym session",
+        "start": _iso(tomorrow_5pm),
+        "end": _iso(tomorrow_6pm),
+    }
+    r = api_client.post("/events", json=payload)
+    assert r.status_code == 201, f"Gym setup failed: {r.text}"
+
+
 SCENARIOS: list[EvalScenario] = [
     # ── Create ────────────────────────────────────────────────────────────────
     EvalScenario(
@@ -547,7 +560,6 @@ SCENARIOS: list[EvalScenario] = [
         ),
     ),
     # ── Messy / stream-of-consciousness input ───────────────────────────────
-
     EvalScenario(
         name="messy_brain_dump",
         seed=False,
@@ -567,15 +579,22 @@ SCENARIOS: list[EvalScenario] = [
             # There are ~7 distinct activities buried in this wall of text.
             # The agent needs to extract and schedule most of them.
             # We check for at least 5 of the 7.
-            sum([
-                _event_with_title(events, "mom") or _event_with_title(events, "call"),
-                _event_with_title(events, "dentist"),
-                _event_with_title(events, "lunch"),
-                _event_with_title(events, "jake") or _event_with_title(events, "mov"),
-                _event_with_title(events, "prescription") or _event_with_title(events, "pharmacy"),
-                _event_with_title(events, "laundry"),
-                _event_with_title(events, "sarah") or _event_with_title(events, "dinner"),
-            ]) >= 5
+            sum(
+                [
+                    _event_with_title(events, "mom")
+                    or _event_with_title(events, "call"),
+                    _event_with_title(events, "dentist"),
+                    _event_with_title(events, "lunch"),
+                    _event_with_title(events, "jake")
+                    or _event_with_title(events, "mov"),
+                    _event_with_title(events, "prescription")
+                    or _event_with_title(events, "pharmacy"),
+                    _event_with_title(events, "laundry"),
+                    _event_with_title(events, "sarah")
+                    or _event_with_title(events, "dinner"),
+                ]
+            )
+            >= 5
         ),
         tags=["create", "batch", "messy-input"],
         description=(
@@ -587,7 +606,6 @@ SCENARIOS: list[EvalScenario] = [
             "up and asking the user to repeat themselves."
         ),
     ),
-
     EvalScenario(
         name="messy_brain_dump_ordering",
         seed=False,
@@ -618,10 +636,9 @@ SCENARIOS: list[EvalScenario] = [
             "Same brain dump, but this oracle checks that the implied ordering "
             "constraints are respected: lunch → dentist → prescription → Jake's move. "
             "The user gave these hints indirectly ('before that', 'after the dentist', "
-            "'on the way to Jake\'s'). Very likely to fail on sequencing."
+            "'on the way to Jake's'). Very likely to fail on sequencing."
         ),
     ),
-
     # ── Double-booking / overlap awareness ────────────────────────────────────
     EvalScenario(
         name="double_book_same_slot",
@@ -812,6 +829,263 @@ SCENARIOS: list[EvalScenario] = [
         description=(
             "3pm UTC should be converted to NY local (EDT: 11am, EST: 10am). "
             "Agent must not create an event at 3pm NY time."
+        ),
+    ),
+    # ── Retroactive awareness (querying the past) ───────────────────────────
+    EvalScenario(
+        name="retroactive_yesterday_query",
+        seed=True,
+        user_message="Did I have anything on my calendar yesterday evening?",
+        oracle=lambda events, reply: (
+            # The seed includes last night's sleep starting at 10pm yesterday.
+            # The agent must call list_events with a past time range and report back.
+            _reply_mentions(
+                reply,
+                "sleep",
+                "10",
+                "22",
+                "pm",
+                "yes",
+                "last night",
+            )
+        ),
+        tags=["read", "retroactive"],
+        description=(
+            "The agent must query a past time range (yesterday evening). "
+            "Likely to fail: it may hallucinate 'I don't have access to past data' "
+            "or not construct the right date range for list_events, "
+            "when the seeded sleep block from yesterday 10pm–today 7am is right there."
+        ),
+    ),
+    EvalScenario(
+        name="retroactive_what_time_did_i_wake",
+        seed=True,
+        user_message="What time did my sleep end this morning?",
+        oracle=lambda events, reply: (
+            # Seeded sleep ended at 7am today.
+            _reply_mentions(reply, "7", "am", "7:00")
+        ),
+        tags=["read", "retroactive"],
+        description=(
+            "Agent must find last night's sleep event and report its end time. "
+            "Requires reading the event data, not guessing from preferences."
+        ),
+    ),
+    # ── Arithmetic on existing event data ─────────────────────────────────────
+    EvalScenario(
+        name="arithmetic_meeting_hours_today",
+        seed=False,
+        setup=_setup_dense_schedule,
+        user_message="How many hours of meetings do I have today?",
+        oracle=lambda events, reply: (
+            # Dense schedule has 4 meetings:
+            #   Team planning:  11–12  = 1h
+            #   1-on-1:         13–14  = 1h
+            #   Client sync:    14–15  = 1h
+            #   Design review:  15:30–16:30 = 1h
+            # Total = 4 hours
+            _reply_mentions(reply, "4 hour", "4h", "four hour")
+        ),
+        tags=["read", "arithmetic", "dense-schedule"],
+        description=(
+            "Agent must list events, identify which are meetings, compute each "
+            "duration, and sum. 4 meetings × 1h each = 4 hours. "
+            "Likely to fail: may count non-meetings, miscalculate durations, "
+            "or report the count of meetings instead of total hours."
+        ),
+    ),
+    EvalScenario(
+        name="arithmetic_free_time_afternoon",
+        seed=False,
+        setup=_setup_dense_schedule,
+        user_message=("How much free time do I have between noon and 5pm today?"),
+        oracle=lambda events, reply: (
+            # Noon–5pm schedule:
+            #   12–13 Lunch, 13–14 1-on-1, 14–15 Client sync,
+            #   15–15:30 Code review, 15:30–16:30 Design review,
+            #   16:30–17:00 Email catchup
+            # That's 12–17 fully packed. Free time = 0.
+            _reply_mentions(
+                reply, "0", "no free", "none", "no time", "fully", "packed", "no gap"
+            )
+        ),
+        tags=["read", "arithmetic", "dense-schedule"],
+        description=(
+            "The afternoon is wall-to-wall packed. Correct answer is 0 free time. "
+            "Agent must scan the range, identify all events, and compute gaps. "
+            "Likely to fail: may miss events, find phantom gaps, or report "
+            "time between event *titles* rather than actual start/end boundaries."
+        ),
+    ),
+    # ── Conditional / if-then scheduling ──────────────────────────────────────
+    EvalScenario(
+        name="conditional_add_if_free",
+        seed=False,
+        setup=_setup_dense_schedule,
+        user_message=(
+            "If I don't have anything at 3pm today, add a gym session there. "
+            "If I do, don't add anything."
+        ),
+        oracle=lambda events, reply: (
+            # At 3pm, the dense schedule has "Code review" (3–3:30pm).
+            # The agent should check, find the conflict, and NOT create a gym event.
+            not _event_with_title(events, "gym")
+        ),
+        tags=["create", "conditional"],
+        description=(
+            "Agent must list_events first, see there's a code review at 3pm, "
+            "and then NOT create the gym session. "
+            "Very likely to fail: LLMs tend to skip the read step and just create, "
+            "or they read but ignore the condition and create anyway."
+        ),
+    ),
+    EvalScenario(
+        name="conditional_add_if_free_passes",
+        seed=True,
+        user_message=(
+            "If I don't have anything at 10am tomorrow, add a yoga class there "
+            "for 1 hour. Otherwise, skip it."
+        ),
+        oracle=lambda events, reply: (
+            # Seeded calendar has nothing tomorrow at 10am, so yoga should be created.
+            _event_with_title(events, "yoga")
+        ),
+        tags=["create", "conditional"],
+        description=(
+            "The positive case: 10am tomorrow is free, so the event should be created. "
+            "Tests that the agent actually reads before deciding, not just reflexively "
+            "refusing because the prompt has an 'if' in it."
+        ),
+    ),
+    # ── Idempotency / duplicate awareness ─────────────────────────────────────
+    EvalScenario(
+        name="idempotent_no_duplicate",
+        seed=False,
+        setup=_setup_pre_existing_gym,
+        user_message="Add a gym session tomorrow at 5pm for an hour.",
+        oracle=lambda events, reply: (
+            # There should be exactly one gym event, not two.
+            sum(1 for e in events if "gym" in e["title"].lower()) == 1
+            # And the agent should mention it already exists.
+            and _reply_mentions(
+                reply,
+                "already",
+                "exists",
+                "existing",
+                "duplicate",
+                "scheduled",
+                "have",
+                "there",
+            )
+        ),
+        tags=["create", "idempotency"],
+        description=(
+            "A gym session at 5pm tomorrow already exists. The agent should notice "
+            "and not create a duplicate. "
+            "Almost certain to fail: the system prompt says nothing about dedup, "
+            "and the agent has no reason to check before creating."
+        ),
+    ),
+    EvalScenario(
+        name="idempotent_different_time_ok",
+        seed=False,
+        setup=_setup_pre_existing_gym,
+        user_message="Add a gym session tomorrow at 8am for an hour.",
+        oracle=lambda events, reply: (
+            # 8am is a different time than the existing 5pm gym. Both should exist.
+            sum(1 for e in events if "gym" in e["title"].lower()) == 2
+        ),
+        tags=["create", "idempotency"],
+        description=(
+            "Same title but different time. Both should coexist. "
+            "Tests the agent doesn't over-dedup by title alone."
+        ),
+    ),
+    # ── Negation / exclusion ───────────────────────────────────────────────────
+    EvalScenario(
+        name="negation_except_one",
+        seed=False,
+        user_message=(
+            "Add these to my calendar for tomorrow: "
+            "gym at 7am, breakfast at 8:30am, team standup at 9am, "
+            "lunch at noon, and a dentist at 2pm. "
+            "Actually, add all of those EXCEPT the gym."
+        ),
+        oracle=lambda events, reply: (
+            # Gym must NOT exist. The other four must.
+            not _event_with_title(events, "gym")
+            and _event_with_title(events, "breakfast")
+            and _event_with_title(events, "standup")
+            and _event_with_title(events, "lunch")
+            and _event_with_title(events, "dentist")
+        ),
+        tags=["create", "negation"],
+        description=(
+            "Classic negation failure: list 5 items, exclude 1. "
+            "LLMs notoriously handle 'EXCEPT' poorly — the gym gets added anyway "
+            "because the model processes the list before processing the exclusion."
+        ),
+    ),
+    EvalScenario(
+        name="negation_delete_all_but_one",
+        seed=False,
+        setup=_setup_dense_schedule,
+        user_message=(
+            "Delete everything on my calendar today except my date night. "
+            "Don't touch the date."
+        ),
+        oracle=lambda events, reply: (
+            # Only date night (and sleep/wind-down, which are tonight/tomorrow AM)
+            # should survive. We check date night exists.
+            _event_with_title(events, "date")
+            # And the daytime events should be gone.
+            and not _event_with_title(events, "standup")
+            and not _event_with_title(events, "lunch")
+            and not _event_with_title(events, "1-on-1")
+        ),
+        tags=["delete", "negation", "dense-schedule"],
+        description=(
+            "Delete-with-exception: wipe everything EXCEPT the date. "
+            "The agent might use clear_all_events (which kills the date too), "
+            "or it might delete events one by one but accidentally include the date. "
+            "Harder than it looks because there are 15 events to process."
+        ),
+    ),
+    EvalScenario(
+        name="negation_no_mornings",
+        seed=False,
+        user_message=(
+            "I have three things to schedule tomorrow: a run, a haircut, and a "
+            "coffee with Alex. The run should be at 7am. The other two can be "
+            "whenever in the afternoon but NOT in the morning."
+        ),
+        oracle=lambda events, reply: (
+            # Run at 7am is fine (explicitly placed in morning).
+            # Haircut and coffee must be after 12pm.
+            _event_with_title(events, "run")
+            and all(
+                datetime.fromisoformat(e["start"]).hour >= 12
+                for e in events
+                if (
+                    "haircut" in e["title"].lower()
+                    or "hair" in e["title"].lower()
+                    or "coffee" in e["title"].lower()
+                    or "alex" in e["title"].lower()
+                )
+            )
+            and (
+                _event_with_title(events, "haircut")
+                or _event_with_title(events, "hair")
+            )
+            and (
+                _event_with_title(events, "coffee") or _event_with_title(events, "alex")
+            )
+        ),
+        tags=["create", "negation"],
+        description=(
+            "Partial negation: the run IS in the morning, but haircut and coffee "
+            "must NOT be. LLMs may place all three in the morning since 'morning' "
+            "was mentioned, or ignore the 'NOT in the morning' constraint entirely."
         ),
     ),
     # ── Dense-schedule scenarios ─────────────────────────────────────────────
