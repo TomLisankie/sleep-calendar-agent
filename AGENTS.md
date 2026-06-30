@@ -19,41 +19,35 @@ tests/             # API endpoint unit tests (pytest, in-memory SQLite)
 evals/             # Agent evaluation suite (4 layers — see Evals below)
 user-prefs.json    # User sleep preferences (bedtime, waketime, wind_down_mins)
 .env               # OPENROUTER_API_KEY and CALENDAR_API_URL
+Dockerfile         # Multi-stage Docker build for the calendar API
+docker-compose.yml # Compose file to run the API with persistent SQLite volume
+.dockerignore      # Keeps images lean (excludes tests, evals, agent, etc.)
+Makefile           # Shortcuts for every common workflow (run `make help`)
+README.md          # User-facing setup and usage guide
 ```
+
+## Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/) | Docker ≥ 20, Compose v2 | Run the mock calendar API |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | ≥ 0.9 | Python package/project manager (agent & tests) |
+| Python | ≥ 3.13 | Required by the project; uv installs it automatically if missing |
+
+An [OpenRouter](https://openrouter.ai) API key is needed to run the agent and
+the live-LLM evaluation layers.
 
 ## Quickstart
 
-**1. Start the calendar API**
+**1. Configure**
 
-```bash
-uv run python main.py        # serves on http://127.0.0.1:8000
-# or: uv run uvicorn mock_calendar_api.app:app --reload
-```
-
-Interactive docs are available at `http://127.0.0.1:8000/docs`. The SQLite file
-`calendar.db` is created next to the app on first run.
-
-**2. Start the agent**
-
-```bash
-uv run python agent/main.py
-```
-
-The agent reads sleep preferences from `user-prefs.json`, injects the current
-New York time into the system prompt, then opens a terminal REPL. Type any
-scheduling request in plain English; the agent calls calendar tools as needed
-and confirms changes in plain language. Type `exit`, `quit`, or `bye` (or
-`Ctrl-C` / `Ctrl-D`) to quit.
-
-**3. Configure**
-
-`.env`:
+Create a `.env` file:
 ```
 OPENROUTER_API_KEY=sk-or-...
 CALENDAR_API_URL=http://127.0.0.1:8000   # default
 ```
 
-`user-prefs.json`:
+Optionally edit sleep preferences in `user-prefs.json`:
 ```json
 {
   "bedtime": "12:30 AM",
@@ -61,6 +55,45 @@ CALENDAR_API_URL=http://127.0.0.1:8000   # default
   "wind_down_mins": 90
 }
 ```
+
+**2. Start the calendar API (Docker)**
+
+```bash
+make docker-up          # or: docker compose up -d
+```
+
+The API serves on `http://127.0.0.1:8000` with Swagger docs at
+`http://127.0.0.1:8000/docs`. The SQLite database is persisted in a Docker
+volume (`calendar-data`) so data survives container restarts.
+
+The database path is configurable via the `DATABASE_URL` environment variable
+(defaults to `sqlite:///./calendar.db` when running outside Docker).
+
+Other Docker targets:
+
+```bash
+make docker-logs        # tail container logs
+make docker-down        # stop the container
+make docker-reset       # stop and delete the database volume
+```
+
+You can also run the API directly without Docker:
+
+```bash
+make api                # or: uv run python main.py
+```
+
+**3. Start the agent**
+
+```bash
+make agent              # or: uv run python agent/main.py
+```
+
+The agent reads sleep preferences from `user-prefs.json`, injects the current
+New York time into the system prompt, then opens a terminal REPL. Type any
+scheduling request in plain English; the agent calls calendar tools as needed
+and confirms changes in plain language. Type `exit`, `quit`, or `bye` (or
+`Ctrl-C` / `Ctrl-D`) to quit.
 
 ## Data model
 
@@ -166,13 +199,13 @@ idempotency. Tests run against an isolated in-memory SQLite DB (no file
 artifacts).
 
 ```bash
-uv run pytest tests/
+make test-unit          # or: uv run pytest tests/
 ```
 
-The standalone smoke script is also available:
+The standalone smoke script (requires a running API):
 
 ```bash
-uv run python scripts/smoke_test.py
+make smoke              # or: uv run python scripts/smoke_test.py
 ```
 
 ## Evals
@@ -185,13 +218,15 @@ and end-to-end scheduling behaviour.
 
 ```bash
 # Layers 1 & 2: deterministic, no LLM, no network — runs in <1s
-uv run pytest evals/test_dispatch.py evals/test_prompt.py evals/test_agent_loop.py evals/test_sleep_guard.py::TestJudgeParser
+make test-evals         # or: uv run pytest evals/test_dispatch.py evals/test_prompt.py \
+                        #        evals/test_agent_loop.py evals/test_sleep_guard.py::TestJudgeParser
 
 # Layers 3 & 4: live LLM (requires OPENROUTER_API_KEY in .env)
-uv run pytest evals/test_scenarios.py evals/test_event_order.py evals/test_sleep_guard.py
+make test-evals-live    # or: uv run pytest evals/test_scenarios.py evals/test_event_order.py \
+                        #        evals/test_sleep_guard.py
 
 # Run everything (API tests + all evals)
-uv run pytest
+make test               # or: uv run pytest
 
 # Target a specific failure-mode tag
 uv run pytest evals/test_scenarios.py -k "negation"
@@ -288,3 +323,23 @@ evals/
 4. For judge-scored scenarios, add a test in `test_event_order.py` or
    `test_sleep_guard.py` that calls `_run_scenario` and passes the result
    to a `Judge` with the appropriate rubric.
+
+## Makefile
+
+All common workflows have `make` shortcuts. Run `make help` to list them:
+
+| Target | Description |
+|--------|-------------|
+| `make help` | Show all available targets |
+| `make api` | Start the calendar API locally (without Docker) |
+| `make agent` | Start the agent REPL |
+| `make test` | Run all tests and evals |
+| `make test-unit` | Run API unit tests only |
+| `make test-evals` | Run deterministic evals (no LLM) |
+| `make test-evals-live` | Run live-LLM evals |
+| `make smoke` | Run the standalone smoke test script |
+| `make docker-build` | Build the Docker image |
+| `make docker-up` | Start the API in Docker |
+| `make docker-down` | Stop the Docker container |
+| `make docker-logs` | Tail Docker container logs |
+| `make docker-reset` | Stop and delete the database volume |
